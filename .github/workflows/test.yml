@@ -1,0 +1,33 @@
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_NOLOGO: '1'
+      
+      # WE 👏 HATE 👏 TELEMETRY 
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Runs from the repository root, where the solution file lives.
+      #
+      # No proxy configuration is provided, so the E2E test suite guarding proxy regression will be skipped.
+      # export CRXFETCH_TEST_PROXIES to run these suites too.
+      #
+      - name: Run tests
+        run: dotnet test --verbosity detailed
