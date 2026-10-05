@@ -1,11 +1,8 @@
 # CrxFetch
 
-A .NET 10 library for downloading Chrome Web Store extensions as raw `.crx` packages, with
-no Chrome, no developer mode and no third-party service in the path. Every package is
-signature-verified and its extension id is re-derived from the embedded public key, so a
-substituted payload is rejected rather than returned.
+A pure C# library mainly designed to download Chrome Web Store extensions as raw `.crx` packages. No external chrome dependency, no developer mode, and no third-party services. Every package is signature-verified and its extension id is re-derived from the embedded public key, so a substituted payload is rejected rather than returned.
 
-Targets `net10.0`, has no NuGet dependencies, and builds clean with warnings-as-errors.
+
 
 ## Quick start
 
@@ -14,7 +11,8 @@ using CrxFetch;
 
 // One-shot: parse an id or store url, download, verify.
 var result = await CrxFetch.CrxDownloader.FetchAsync(
-    "https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm");
+    "https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm"
+);
 
 Console.WriteLine(result.Info.ExtensionId);      // cjpalhdlnbpafiamejdnhcphjbkeiagm
 Console.WriteLine(result.Info.Format);           // Crx3
@@ -121,7 +119,6 @@ CRX2 is parsed only far enough to locate the archive. Chromium rejects CRX2 outr
 is read as `http`. A null proxy leaves the system proxy configuration in effect.
 
 ```csharp
-ProxyEndpoint.SupportedSchemes;          // ["http", "https", "socks4", "socks4a", "socks5"]
 ProxyEndpoint.TryParse("1.2.3.4:8080", out var proxy);
 ProxyEndpoint.Parse("socks4://1.2.3.4:1080");
 ```
@@ -145,7 +142,8 @@ and bounded to 10 hops, so the final url is known and reported.
 ```csharp
 // Direct CDN link, or a redirect such as the update service's own response=redirect endpoint.
 var result = await CrxFetch.CrxDownloader.FetchLinkAsync(
-    "https://clients2.googleusercontent.com/crx/blobs/AZPVhcSooyIJq6Qj....crx");
+  "https://clients2.googleusercontent.com/crx/blobs/AZPVhcSooyIJq6Qj....crx"
+);
 
 // PackageUri is where the bytes finally came from, after following redirects.
 Console.WriteLine(result.PackageUri);
@@ -215,7 +213,7 @@ token that is not a command name is treated as the target.
 - **Offline** — id parsing, CRX2/CRX3 parsing and signature verification against Chromium's
   own `valid_publisher.crx3` test data, validation outcomes, and proxy endpoint parsing for all
   five schemes.
-- **Proxy plumbing** — a local CONNECT proxy proves the request really is tunnelled rather than
+- **Proxy plumbing** — a local CONNECT proxy proves the request is tunnelled rather than
   silently going direct, and a dead-port endpoint per scheme proves every scheme is dialled.
 - **End-to-end** (`Category=E2E`) — retrieve, download and inspect against the live service,
   with and without a proxy, across `http`, `https`, `socks4` and `socks5`.

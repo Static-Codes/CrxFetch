@@ -83,45 +83,41 @@ internal sealed class LocalCrxServer : IDisposable
         var path = context.Request.Url?.AbsolutePath.TrimStart('/') ?? string.Empty;
         var response = context.Response;
 
-        return path switch {
-            "direct.crx" => WriteBytes(response, _package, "application/x-chrome-extension"),
-            "empty.crx" => (_ => {
-                response.StatusCode = 200;
-                response.ContentLength = 0;
-                response.Close();
-            }),
-            "notacrx.crx" => WriteBytes(response, Encoding.UTF8.GetBytes("this is not a crx"), "application/octet-stream"),
-            "redirect.crx" => Redirect(response, "direct.crx"),
-            "hop.crx" => Redirect(response, "hop2.crx"),
-            "hop2.crx" => Redirect(response, "direct.crx"),
-            "loop.crx" => Redirect(response, "loop.crx"),
-            "no-location.crx" => (_ => {
-                response.StatusCode = 302;
-                response.Close();
-            }),
-            // Default case of 404.
-            _ => (_ => {
-                response.StatusCode = 404;
-                response.Close();
-            })
+        // Cases only describe the response; writing it happens once, below.
+        var route = path switch {
+            "direct.crx" => new Route(200, ContentType: "application/x-chrome-extension", Payload: _package),
+            "notacrx.crx" => new Route(200, ContentType: "application/octet-stream", Payload: Encoding.UTF8.GetBytes("this is not a crx")),
+            "empty.crx" => new Route(200, Payload: []),
+            "redirect.crx" => new Route(302, Location: "direct.crx"),
+            "hop.crx" => new Route(302, Location: "hop2.crx"),
+            "hop2.crx" => new Route(302, Location: "direct.crx"),
+            "loop.crx" => new Route(302, Location: "loop.crx"),
+            "no-location.crx" => new Route(302),
+            _ => new Route(404)
         };
-    }
 
-    private static void Redirect(HttpListenerResponse response, string location)
-    {
-        response.StatusCode = 302;
-        response.Headers.Add("Location", location);
+        response.StatusCode = route.Status;
+
+        if (route.Location is not null)
+        {
+            response.Headers.Add("Location", route.Location);
+        }
+
+        if (route.ContentType is not null)
+        {
+            response.ContentType = route.ContentType;
+        }
+
+        if (route.Payload is not null)
+        {
+            response.ContentLength64 = route.Payload.Length;
+            response.OutputStream.Write(route.Payload, 0, route.Payload.Length);
+        }
+
         response.Close();
     }
 
-    private static void WriteBytes(HttpListenerResponse response, byte[] payload, string contentType)
-    {
-        response.StatusCode = 200;
-        response.ContentType = contentType;
-        response.ContentLength64 = payload.Length;
-        response.OutputStream.Write(payload, 0, payload.Length);
-        response.Close();
-    }
+    private readonly record struct Route(int Status, string? Location = null, string? ContentType = null, byte[]? Payload = null);
 
     public void Dispose()
     {
