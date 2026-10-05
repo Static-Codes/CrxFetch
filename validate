@@ -1,3 +1,4 @@
+# This shell script provides a quick but limited test of CrxFetch's parsing abilities.
 for pair in "uBlock:cjpalhdlnbpafiamejdnhcphjbkeiagm" "Translate:aapbdbdomjkkjkaonfhkkikfgjllcleb"; do
     name=${pair%%:*}; eid=${pair##*:}
     x=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote('id='+sys.argv[1]+'&installsource=ondemand&uc',safe=''))" "$eid")

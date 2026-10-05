@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Net;
 
 namespace CrxFetch;
 
@@ -131,14 +132,163 @@ public sealed class CrxDownloader : IDisposable
     }
 
     /// <summary>
+    /// Downloads a package straight from a hosted link, bypassing the update service.
+    /// </summary>
+    /// <param name="link">
+    /// A url that serves the package, either directly or through one or more redirects.
+    /// </param>
+    /// <param name="expectedExtensionId">
+    /// The id the package must belong to. Supply it when the link embeds an id that should be
+    /// enforced; pass null to accept whatever the link serves and report the id derived from
+    /// the package itself.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the request.</param>
+    /// <returns>
+    /// The validated package, whose <see cref="CrxDownloadResult.PackageUri"/> is the url the
+    /// bytes finally came from after following any redirects.
+    /// </returns>
+    /// <exception cref="ArgumentException"><paramref name="link"/> is not an absolute http or https url.</exception>
+    /// <exception cref="CrxTransportException">The link was unreachable, redirected too often, or answered with an error.</exception>
+    /// <exception cref="CrxValidationException">The payload was not a CRX, belonged to another id, or failed validation.</exception>
+    public async Task<CrxDownloadResult> DownloadFromLinkAsync(
+        Uri link,
+        string? expectedExtensionId = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(link);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!CrxLink.TryCreate(link.AbsoluteUri, out _))
+        {
+            throw new ArgumentException(
+                $"'{link}' is not an absolute http or https url.", nameof(link));
+        }
+
+        var (package, finalUri) = await FetchHostedPackageAsync(link, cancellationToken).ConfigureAwait(false);
+
+        if (package.Length == 0)
+        {
+            throw new CrxValidationException($"{finalUri} served an empty body.");
+        }
+
+        var info = Validate(
+            package,
+            expectedExtensionId ?? string.Empty,
+            _options.RequireSignature);
+
+        return new CrxDownloadResult(package, info, finalUri, []);
+    }
+
+    /// <summary>
+    /// One-shot wrapper that accepts a hosted package link, an extension id, or a store URL and
+    /// takes the right path for each.
+    /// </summary>
+    /// <param name="linkOrId">A hosted package link, an extension id, or a Chrome Web Store URL.</param>
+    /// <param name="options">Proxy and timeout configuration; defaults are used when null.</param>
+    /// <param name="cancellationToken">Cancels the request.</param>
+    /// <returns>The validated package.</returns>
+    /// <exception cref="ArgumentException">The input was neither a link, an id nor a store URL.</exception>
+    /// <exception cref="CrxTransportException">The service or link was unreachable, or redirected too often.</exception>
+    /// <exception cref="CrxNoPackageException">No package url was offered for the extension.</exception>
+    /// <exception cref="CrxValidationException">The payload failed validation.</exception>
+    public static async Task<CrxDownloadResult> FetchLinkAsync(
+        string linkOrId,
+        CrxDownloadOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (CrxLink.TryCreate(linkOrId, out var link) && link is not null)
+        {
+            // A signed package url embeds the id in its filename, so use it to pin the identity
+            // of what came back instead of trusting the request.
+            var expected = CrxLink.TryGetExtensionId(link, out var embedded) ? embedded : null;
+
+            using var direct = new CrxDownloader(options);
+            return await direct
+                .DownloadFromLinkAsync(link, expected, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return await FetchAsync(linkOrId, options, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Fetches a hosted package, following redirects explicitly so the final url is known and
+    /// the hop count is bounded.
+    /// </summary>
+    private async Task<(byte[] Package, Uri FinalUri)> FetchHostedPackageAsync(
+        Uri link,
+        CancellationToken cancellationToken)
+    {
+        const int MaxHops = 10;
+
+        // The update client does not follow redirects, so each hop is inspected rather than
+        // being resolved invisibly by the handler.
+        var current = link;
+
+        for (var hops = 0; hops <= MaxHops; hops++)
+        {
+            using var response = await _updateClient
+                .GetAsync(current, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (IsRedirect(response.StatusCode))
+            {
+                if (response.Headers.Location is not { } location)
+                {
+                    throw new CrxTransportException(
+                        $"{current} answered {(int)response.StatusCode} with no Location header.",
+                        new InvalidOperationException("missing Location"));
+                }
+
+                current = location.IsAbsoluteUri ? location : new Uri(current, location);
+                continue;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new CrxTransportException(
+                    $"{current} answered {(int)response.StatusCode}.",
+                    new InvalidOperationException(response.ReasonPhrase ?? "unexpected status"));
+            }
+
+            var declared = response.Content.Headers.ContentLength;
+            if (declared > CrxDownloadOptions.MaxPackageBytes)
+            {
+                throw new CrxTransportException(
+                    $"{current} declares {declared} bytes, above the "
+                    + $"{CrxDownloadOptions.MaxPackageBytes} byte limit.",
+                    new InvalidOperationException("package too large"));
+            }
+
+            var bytes = await response.Content
+                .ReadAsByteArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            return (bytes, current);
+        }
+
+        throw new CrxTransportException(
+            $"Gave up after {MaxHops} redirects starting at {link}.",
+            new InvalidOperationException("redirect loop"));
+    }
+
+    private static bool IsRedirect(HttpStatusCode status) => (int)status is >= 300 and < 400;
+
+    /// <summary>
     /// Parses and validates a CRX that has already been downloaded.
     /// </summary>
     /// <param name="package">Raw CRX bytes.</param>
-    /// <param name="extensionId">The id the package is expected to belong to.</param>
+    /// <param name="extensionId">
+    /// The id the package is expected to belong to. An empty string skips the identity check,
+    /// for links that do not say which extension they serve.
+    /// </param>
     /// <param name="requireSignature">Whether an unverifiable signature is fatal.</param>
     /// <returns>What the package declares about itself.</returns>
     /// <exception cref="CrxValidationException">The payload is malformed, belongs to another id, or is unsigned.</exception>
-    public static CrxInfo Validate(byte[] package, string extensionId, bool requireSignature = true)
+    public static CrxInfo Validate(
+        byte[] package,
+        string extensionId,
+        bool requireSignature = true)
     {
         ArgumentNullException.ThrowIfNull(package);
 
@@ -152,7 +302,7 @@ public sealed class CrxDownloader : IDisposable
             throw new CrxValidationException($"Payload is not a valid CRX: {ex.Message}", ex);
         }
 
-        if (!string.Equals(info.ExtensionId, extensionId, StringComparison.Ordinal))
+        if (extensionId.Length > 0 && !string.Equals(info.ExtensionId, extensionId, StringComparison.Ordinal))
         {
             throw new CrxValidationException(
                 $"Id mismatch: asked for {extensionId} but the package is signed for {info.ExtensionId}. " +
