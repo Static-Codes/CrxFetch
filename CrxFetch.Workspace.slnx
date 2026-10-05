@@ -1,5 +1,0 @@
-<Solution>
-  <Project Path="CrxFetch.Cli/CrxFetch.Cli.csproj" />
-  <Project Path="CrxFetch.Tests/CrxFetch.Tests.csproj" />
-  <Project Path="CrxFetch/CrxFetch.csproj" />
-</Solution>
