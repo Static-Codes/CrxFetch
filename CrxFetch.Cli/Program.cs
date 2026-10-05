@@ -77,6 +77,10 @@ internal static partial class Program
     private static string Qualify(string name) =>
         name.StartsWith('-') ? name : name.Length == 1 ? $"-{name}" : $"--{name}";
 
+    /// <summary>Every command the tool exposes.</summary>
+    private static readonly string[] KnownCommands =
+        [FetchCommand.Name, FetchCommand.LinkAlias, InspectCommand.Name];
+
     /// <summary>
     /// Builds the argument vector for Spectre, preserving three things the original
     /// hand-rolled parser allowed and Spectre's stricter parser does not:
@@ -87,11 +91,11 @@ internal static partial class Program
     /// </summary>
     /// <param name="args">Raw command line arguments.</param>
     /// <param name="error">Set when an unrecognised option was found.</param>
-    /// <returns>Tokens to hand to Spectre, prefixed with the command name.</returns>
+    /// <returns>Tokens to hand to Spectre, led by the command name.</returns>
     private static List<string> PrepareArguments(IReadOnlyList<string> args, out string? error)
     {
         error = null;
-        var tokens = new List<string>(args.Count + 1) { FetchCommand.Name };
+        var optionTokens = new List<string>(args.Count);
         var positionals = new List<string>();
 
         for (var i = 0; i < args.Count; i++)
@@ -107,26 +111,26 @@ internal static partial class Program
             // Spectre handles these itself.
             if (token is "-h" or "--help" or "--version")
             {
-                tokens.Add(token);
+                optionTokens.Add(token);
                 continue;
             }
 
             if (!OptionTable.TryGetValue(token, out var takesValue))
             {
                 error = $"Unknown option: {token}";
-                return tokens;
+                break;
             }
 
             if (!takesValue)
             {
-                tokens.Add(token);
+                optionTokens.Add(token);
                 continue;
             }
 
             if (i + 1 < args.Count)
             {
-                tokens.Add(token);
-                tokens.Add(args[++i]);
+                optionTokens.Add(token);
+                optionTokens.Add(args[++i]);
             }
             else
             {
@@ -134,9 +138,19 @@ internal static partial class Program
             }
         }
 
-        if (positionals.Count > 0)
+        // A leading command name selects the command. Anything else is the target, and the
+        // command defaults to `fetch`, which is how the tool behaved before it had commands.
+        var named = positionals.Count > 0 && KnownCommands.Contains(positionals[0], StringComparer.Ordinal);
+        var command = named ? positionals[0] : FetchCommand.Name;
+
+        var target = named ? positionals.Skip(1).LastOrDefault() : positionals.LastOrDefault();
+
+        var tokens = new List<string>(args.Count + 2) { command };
+        tokens.AddRange(optionTokens);
+
+        if (target is not null)
         {
-            tokens.Add(positionals[^1]);
+            tokens.Add(target);
         }
 
         return tokens;
@@ -156,17 +170,30 @@ internal static partial class Program
             config.PropagateExceptions();
 
             config.AddCommand<FetchCommand>(FetchCommand.Name)
+                .WithAlias(FetchCommand.LinkAlias)
                 .WithDescription(
-                    "Download a Chrome Web Store extension as a raw .crx, no developer mode. " +
-                    "The download is verified: the signature is checked and the extension id is " +
-                    "re-derived from the embedded public key, so a substituted payload is rejected.")
+                    "Download a .crx and verify it. Accepts an extension id, a Chrome Web Store "
+                    + "URL, or a URL that hosts the package directly. A Web Store URL is resolved "
+                    + "through Google's update service; any other URL is fetched as-is, following "
+                    + "redirects. Either way the signature is checked and the extension id is "
+                    + "re-derived from the embedded public key, so a substituted payload is rejected.")
                 .WithExample("fetch", "cjpalhdlnbpafiamejdnhcphjbkeiagm")
-                .WithExample("fetch", "--inspect", "ublock.crx")
+                .WithExample("inspect", "ublock.crx")
                 .WithExample(
                     "fetch",
                     "--proxy", "socks5://127.0.0.1:1080",
                     "--zip",
-                    "https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm");
+                    "https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm")
+                .WithExample(
+                    "fetch",
+                    "https://clients2.googleusercontent.com/crx/blobs/AZPVhcSooyIJq6Qj....crx");
+
+            config.AddCommand<InspectCommand>(InspectCommand.Name)
+                .WithDescription(
+                    "Verify a .crx already on disk: parse the container, check its signatures and "
+                    + "report the extension id, format and archive bounds. Exits 0 when the "
+                    + "signature verifies.")
+                .WithExample("inspect", "ublock.crx");
         });
 
         return app;
@@ -178,10 +205,14 @@ internal static partial class Program
             crxfetch - download a Chrome Web Store extension as a raw .crx, no developer mode.
 
             usage:
-              crxfetch <extension-id|store-url> [options]
+              crxfetch fetch <extension-id|store-url|extension-link> [options]
+              crxfetch inspect <file.crx>
+
+            The fetch target is routed automatically. A Chrome Web Store URL is resolved through
+            Google's update service; a bare id is resolved the same way; any other http(s) URL is
+            treated as hosting the package already and fetched directly, following redirects.
 
             options:
-                  --inspect <file.crx>     verify a .crx already on disk and exit
               -o, --out <file>            output path (default <id>.crx in the current directory)
                   --proxy <host:port>     route traffic through http, https, socks4 or socks5
                   --chrome-version <ver>  version reported to the update service

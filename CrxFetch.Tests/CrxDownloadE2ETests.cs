@@ -124,7 +124,8 @@ public sealed class CrxDownloadE2ETests
         var proxy = RequireProxy(scheme);
 
         CrxDownloadResult result;
-        try {
+        try
+        {
             result = await FetchAsync(SettledExtensionId, proxy);
         }
         catch (CrxException ex)
@@ -141,7 +142,8 @@ public sealed class CrxDownloadE2ETests
     public async Task Download_And_Inspect_WithoutProxy_ProducesAVerifiedPackageOrDeclines()
     {
         CrxDownloadResult result;
-        try {
+        try
+        {
             result = await FetchAsync(SettledExtensionId, proxy: null);
         }
         catch (CrxNoPackageException ex)

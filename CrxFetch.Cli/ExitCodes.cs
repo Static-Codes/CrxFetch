@@ -6,7 +6,7 @@ namespace CrxFetch.Cli;
 /// </summary>
 internal static class ExitCodes
 {
-    /// <summary>Success, and for <c>--inspect</c> a verified signature.</summary>
+    /// <summary>Success, and for <c>inspect</c> a verified signature.</summary>
     public const int Ok = 0;
 
     /// <summary>Bad invocation: missing, unknown or unparsable arguments.</summary>

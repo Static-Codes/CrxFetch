@@ -102,6 +102,9 @@ CRX2 is parsed only far enough to locate the archive. Chromium rejects CRX2 outr
 | Type | Purpose |
 | --- | --- |
 | `CrxDownloader` | Retrieve, download and validate. `FetchAsync` for one-shot use. |
+| `CrxLink` | Recognises urls that host a package, direct or via a redirect. |
+| `CrxDownloader.DownloadFromLinkAsync` | Fetches a hosted package, following redirects explicitly. |
+| `CrxDownloader.FetchLinkAsync` | One-shot for a link, an id, or a store URL. |
 | `CrxDownloadOptions` | Proxy, Chrome version, timeouts, signature requirement. |
 | `CrxDownloadResult` | Package bytes, `CrxInfo`, package uri, and every request attempted. |
 | `CrxArchive` | Extracts the ZIP embedded in a CRX. |
@@ -133,20 +136,77 @@ ProxyEndpoint.Parse("socks4://1.2.3.4:1080");
 
 All derive from `CrxException`.
 
+### Hosted links
+
+A package url can be fetched directly, skipping the update service entirely. Both shapes work: a
+url that serves the bytes, and one that answers with a redirect. Redirects are followed explicitly
+and bounded to 10 hops, so the final url is known and reported.
+
+```csharp
+// Direct CDN link, or a redirect such as the update service's own response=redirect endpoint.
+var result = await CrxFetch.CrxDownloader.FetchLinkAsync(
+    "https://clients2.googleusercontent.com/crx/blobs/AZPVhcSooyIJq6Qj....crx");
+
+// PackageUri is where the bytes finally came from, after following redirects.
+Console.WriteLine(result.PackageUri);
+Console.WriteLine(result.Info.SignatureVerified);
+```
+
+This is the escape hatch for extensions the update service refuses. Extensions outside Google's
+allowlist never get a `codebase` from GUP, but if you can obtain a package url another way —
+the store's own redirect endpoint, a mirror, an internal artifact — it will be fetched and
+verified.
+
+When the link embeds an id it is used to pin identity, so a link serving the wrong package is
+rejected rather than written out. Pass `expectedExtensionId: null` to skip that check.
+
+```csharp
+// Reach for the network directly, no update service involved.
+await CrxFetch.CrxDownloader.FetchLinkAsync(url, new CrxDownloadOptions { Proxy = proxy });
+
+// Or decide explicitly.
+using var downloader = new CrxDownloader();
+await downloader.DownloadFromLinkAsync(new Uri(url));
+```
+
 ## Command line
 
-`CrxFetch.Cli` wraps the library:
+`CrxFetch.Cli` wraps the library in two commands:
 
 ```
-crxfetch <extension-id|store-url> [-o out.crx] [--proxy host:port] [--zip]
-         [--chrome-version <ver>] [--no-verify] [--inspect file.crx] [-v|--verbose]
+crxfetch fetch <extension-id|store-url|extension-link> [options]
+crxfetch inspect <file.crx>
 ```
 
-### Exit codes: 
-  - `0`: Success, 
-  - `64` Usage, 
-  - `65` Bad Payload, 
-  - `69` No package located or a network transport failure occured.
+| Command | Purpose |
+| --- | --- |
+| `fetch` | Download and verify a package. |
+| `inspect` | Verify a `.crx` already on disk. Exits 0 when the signature verifies. |
+
+`fetch` options: `-o|--out <file>`, `--proxy <host:port>`, `--chrome-version <ver>`, `--zip`,
+`--no-verify`, `-v|--verbose`. `inspect` takes no options.
+
+The fetch target is routed automatically, by asking whether the URL is on the Chrome Web Store:
+
+| Target | Route |
+| --- | --- |
+| bare 32-char id | update service |
+| `chromewebstore.google.com` / `chrome.google.com` URL | update service |
+| any other `http(s)` URL | fetched as-is, following redirects |
+
+So a raw `.crx` link from GitHub, a mirror or Google's own CDN resolves straight to a package
+download and never touches the update service. `extension-link` is accepted as an alias for
+`fetch`.
+
+The command name is optional: `crxfetch <id>` still means `crxfetch fetch <id>`, and a leading
+token that is not a command name is treated as the target.
+
+### Exit codes
+
+  - `0`: Success,
+  - `64`: Usage,
+  - `65`: Bad Payload,
+  - `69`: No package located or a network transport failure occurred.
 
 ## Tests
 
