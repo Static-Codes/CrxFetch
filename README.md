@@ -44,7 +44,7 @@ Console.WriteLine(info.ZipOffset);         // where the ZIP starts inside the co
 ## How retrieval works
 
 `ChromeUpdateService` talks to Google's Update Protocol endpoint,
-`https://clients2.google.com/service/update2/crx` — the same one Chromium's own component
+`https://clients2.google.com/service/update2/crx`: the same one Chromium's own component
 updater uses. It tries four client identities in order and accepts either of the two shapes
 the service answers in:
 
@@ -68,7 +68,7 @@ Two behaviours are worth knowing, both measured rather than assumed:
   | uBlock Origin (`cjpalhdlnbp…`) | `false` | no codebase |
 
   So the deciding factor is Google's extension allowlist, **not** how recently an extension
-  shipped — an earlier guess along those lines was wrong. Extensions outside the allowlist get
+  shipped: an earlier guess along those lines was wrong. Extensions outside the allowlist get
   no package from any egress, so no proxy setting can produce one; they have to come from
   elsewhere. Changing egress via `--proxy` / `CrxDownloadOptions.Proxy` still matters for
   reaching the service at all, since datacentre and VPN ranges are frequently unreachable.
@@ -151,8 +151,8 @@ Console.WriteLine(result.Info.SignatureVerified);
 ```
 
 This is the escape hatch for extensions the update service refuses. Extensions outside Google's
-allowlist never get a `codebase` from GUP, but if you can obtain a package url another way —
-the store's own redirect endpoint, a mirror, an internal artifact — it will be fetched and
+allowlist never get a `codebase` from GUP, but if you can obtain a package url another way:
+the store's own redirect endpoint, a mirror, an internal artifact: it will be fetched and
 verified.
 
 When the link embeds an id it is used to pin identity, so a link serving the wrong package is
@@ -179,43 +179,42 @@ crxfetch inspect <file.crx>
 | Command | Purpose |
 | --- | --- |
 | `fetch` | Download and verify a package. |
-| `inspect` | Verify a `.crx` already on disk. Exits 0 when the signature verifies. |
+| `inspect` | Verify a `.crx` already on disk. Exits with 0 when the signature is verified. |
 
 `fetch` options: `-o|--out <file>`, `--proxy <host:port>`, `--chrome-version <ver>`, `--zip`,
 `--no-verify`, `-v|--verbose`. `inspect` takes no options.
 
-The fetch target is routed automatically, by asking whether the URL is on the Chrome Web Store:
+The fetch target is routed automatically; It is determined by  the Uri schema
 
 | Target | Route |
 | --- | --- |
-| bare 32-char id | update service |
-| `chromewebstore.google.com` / `chrome.google.com` URL | update service |
-| any other `http(s)` URL | fetched as-is, following redirects |
+| 32 Char Extension ID | UpdateService |
+| A chrome webstore URL (`chromewebstore.google.com` / `chrome.google.com`) URL | UpdateService |
+| Any other `http`/`http(s)` URi | Fetched directly, following any redirects. |
 
-So a raw `.crx` link from GitHub, a mirror or Google's own CDN resolves straight to a package
-download and never touches the update service. `extension-link` is accepted as an alias for
-`fetch`.
+A raw `.crx` link from GitHub, a mirror or Google's own CDN is downloaded directly, never touching the update service. 
 
-The command name is optional: `crxfetch <id>` still means `crxfetch fetch <id>`, and a leading
-token that is not a command name is treated as the target.
+Note: `extension-link` is accepted as an alias for `fetch`.
 
-### Exit codes
+The command name is optional: `crxfetch <id>` still resolves to `crxfetch fetch <id>`, and a leading token that is not a command name is treated as the target.
+
+### Exit Codes
 
   - `0`: Success,
-  - `64`: Usage,
-  - `65`: Bad Payload,
+  - `64`: Usage Error,
+  - `65`: Bad Payload / Rejected Request,
   - `69`: No package located or a network transport failure occurred.
 
 ## Tests
 
 `CrxFetch.Tests` (namespace `CrxFetch.Tests`) runs three layers:
 
-- **Offline** — id parsing, CRX2/CRX3 parsing and signature verification against Chromium's
+- **Offline**: id parsing, CRX2/CRX3 parsing and signature verification against Chromium's
   own `valid_publisher.crx3` test data, validation outcomes, and proxy endpoint parsing for all
   five schemes.
-- **Proxy plumbing** — a local CONNECT proxy proves the request is tunnelled rather than
+- **Proxy plumbing**: a local CONNECT proxy proves the request is tunnelled rather than
   silently going direct, and a dead-port endpoint per scheme proves every scheme is dialled.
-- **End-to-end** (`Category=E2E`) — retrieve, download and inspect against the live service,
+- **End-to-end** (`Category=E2E`): retrieve, download and inspect against the live service,
   with and without a proxy, across `http`, `https`, `socks4` and `socks5`.
 
 ```bash
